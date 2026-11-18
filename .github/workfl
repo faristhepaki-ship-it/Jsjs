@@ -1,0 +1,83 @@
+
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract ZIP
+        run: |
+          mkdir -p source
+          ZIP=$(find . -maxdepth 1 -iname "*.zip" -print -quit)
+          if [ -z "$ZIP" ]; then
+            echo "ZIP file not found"
+            exit 1
+          fi
+          unzip -oq "$ZIP" -d source
+
+      - name: Find Xcode project
+        run: |
+          WORKSPACE=$(find source -name "*.xcworkspace" -print -quit)
+          PROJECT=$(find source -name "*.xcodeproj" -print -quit)
+
+          if [ -n "$WORKSPACE" ]; then
+            echo "TYPE=workspace" >> $GITHUB_ENV
+            echo "PROJECT_PATH=$WORKSPACE" >> $GITHUB_ENV
+          elif [ -n "$PROJECT" ]; then
+            echo "TYPE=project" >> $GITHUB_ENV
+            echo "PROJECT_PATH=$PROJECT" >> $GITHUB_ENV
+          else
+            echo "No Xcode project found"
+            exit 1
+          fi
+
+      - name: Select scheme
+        run: |
+          if [ "$TYPE" = "workspace" ]; then
+            LIST=$(xcodebuild -list -json -workspace "$PROJECT_PATH")
+          else
+            LIST=$(xcodebuild -list -json -project "$PROJECT_PATH")
+          fi
+
+          SCHEME=$(echo "$LIST" | jq -r '(.workspace.schemes // .project.schemes)[0]')
+
+          if [ "$SCHEME" = "null" ] || [ -z "$SCHEME" ]; then
+            echo "No scheme found"
+            exit 1
+          fi
+
+          echo "SCHEME=$SCHEME" >> $GITHUB_ENV
+
+      - name: Build application
+        run: |
+          if [ "$TYPE" = "workspace" ]; then
+            OPTION="-workspace"
+          else
+            OPTION="-project"
+          fi
+
+          xcodebuild archive \
+            $OPTION "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app Payload/
+          zip -r App.ipa Payload
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-IPA
+          path: App.ipa
