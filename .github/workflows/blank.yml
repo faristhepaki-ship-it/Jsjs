@@ -1,0 +1,114 @@
+# 
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v4
+
+      - name: Extract ZIP if present
+        run: |
+          ZIP=$(find . -maxdepth 1 -iname "*.zip" -print -quit)
+          if [ -n "$ZIP" ]; then
+            mkdir -p source
+            unzip -oq "$ZIP" -d source
+          fi
+
+      - name: Find iOS project
+        id: project
+        run: |
+          ROOT="."
+          if [ -d source ]; then ROOT="source"; fi
+
+          WORKSPACE=$(find "$ROOT" -name "*.xcworkspace" -print -quit)
+          PROJECT=$(find "$ROOT" -name "*.xcodeproj" -print -quit)
+
+          if [ -n "$WORKSPACE" ]; then
+            echo "TYPE=workspace" >> $GITHUB_ENV
+            echo "PATH=$WORKSPACE" >> $GITHUB_ENV
+            INFO=$(xcodebuild -list -json -workspace "$WORKSPACE")
+          elif [ -n "$PROJECT" ]; then
+            echo "TYPE=project" >> $GITHUB_ENV
+            echo "PATH=$PROJECT" >> $GITHUB_ENV
+            INFO=$(xcodebuild -list -json -project "$PROJECT")
+          else
+            echo "No Xcode project found."
+            exit 1
+          fi
+
+          SCHEME=$(echo "$INFO" | jq -r \
+            '(.workspace.schemes // .project.schemes)[0]')
+
+          echo "SCHEME=$SCHEME" >> $GITHUB_ENV
+
+      - name: Build iOS app
+        run: |
+          if [ "$TYPE" = "workspace" ]; then
+            OPTION="-workspace"
+          else
+            OPTION="-project"
+          fi
+
+          xcodebuild archive \
+            "$OPTION" "$PATH" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Create IPA
+        run: |
+          mkdir -p Payload
+          cp -R "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app Payload/
+          zip -r App.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-IPA
+          path: App.ipa
+This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: echo Hello, world!
+
+      # Runs a set of commands using the runners shell
+      - name: Run a multi-line script
+        run: |
+          echo Add other actions to build,
+          echo test, and deploy your project.
